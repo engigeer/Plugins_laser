@@ -28,6 +28,7 @@
 #include <math.h>
 
 #include "grbl/hal.h"
+#include "grbl/override.h"
 #include "grbl/protocol.h"
 #include "grbl/nvs_buffer.h"
 
@@ -46,23 +47,20 @@ typedef struct {
     float off_delay;
     uint8_t coolant_ok_port;
     uint8_t coolant_temp_port;
+    uint8_t spindle_link;
 } laser_coolant_settings_t;
 
 static uint8_t coolant_ok_port, coolant_temp_port;
 static bool coolant_on = false, monitor_on = false, can_monitor = false, coolant_off_pending = false;
+static on_spindle_select_ptr on_spindle_select;
 static on_report_options_ptr on_report_options;
 static on_realtime_report_ptr on_realtime_report;
 static coolant_ptrs_t on_coolant_changed;
+static spindle_set_state_ptr on_spindle_set_state;
 static nvs_address_t nvs_address;
 static laser_coolant_settings_t coolant_settings;
 static uint8_t n_ain, n_din;
 static char max_aport[4], max_dport[4];
-
-static void coolant_lost_handler (uint8_t port, bool state)
-{
-    if(coolant_on && !coolant_off_pending)
-        system_set_exec_alarm(Alarm_AbortCycle);
-}
 
 static void coolant_flood_off (void *data)
 {
@@ -73,15 +71,26 @@ static void coolant_flood_off (void *data)
     sys.report.coolant = On; // Set to report change immediately
 }
 
+static void coolant_lost_handler (uint8_t port, bool state)
+{
+    if(coolant_on && !coolant_off_pending){
+        task_add_immediate(coolant_flood_off, NULL);
+        system_set_exec_alarm(Alarm_AbortCycle);
+    }        
+}
+
 // Start/stop tube coolant, wait for ok signal on start if delay is configured.
 static void coolantSetState (coolant_state_t mode)
 {
-    static bool irq_checked = false;
-
     bool changed = mode.flood != hal.coolant.get_state().flood || (mode.flood && coolant_off_pending);
 
     if(changed && !mode.flood) {
 
+        if(gc_spindle_get(0)->state.on) { // is this the correct way to do this? [might want to tweak this a bit]          
+            task_add_immediate(coolant_flood_off, NULL);
+            system_set_exec_alarm(Alarm_AbortCycle);            
+            return;
+        }
         if(coolant_settings.off_delay > 0.0f && !sys.reset_pending) {
             mode.flood = On;
             coolant_off_pending = task_add_delayed(coolant_flood_off, NULL, (uint32_t)(coolant_settings.off_delay * 60.0f * 1000.0f));
@@ -95,29 +104,36 @@ static void coolantSetState (coolant_state_t mode)
     on_coolant_changed.set_state(mode);
 
     if(changed && mode.flood) {
-        task_delete(coolant_flood_off, NULL);
-        coolant_off_pending = false;
+        if (coolant_off_pending) {
+            task_delete(coolant_flood_off, NULL);
+            coolant_off_pending = false;
+        }
         if(coolant_settings.on_delay > 0.0f && ioport_wait_on_input(Port_Digital, coolant_ok_port, WaitMode_High, coolant_settings.on_delay) != 1) {
-            mode.flood = Off;
-            coolant_on = false;
-            on_coolant_changed.set_state(mode);
+            task_add_immediate(coolant_flood_off, NULL);
             system_set_exec_alarm(Alarm_AbortCycle);
         } else
             coolant_on = true;
     }
 
-    if(!irq_checked) {
-
-        irq_checked = true;
-
-        if(ioports_can_do().io) {
-            xbar_t *port = ioport_get_info(Port_Digital, Port_Input, coolant_ok_port);
-            if(port && (port->cap.irq_mode & IRQ_Mode_Falling))
-                ioport_enable_irq(coolant_ok_port, IRQ_Mode_Falling, coolant_lost_handler);
-        }
-    }
 
     monitor_on = mode.flood && (coolant_settings.min_temp + coolant_settings.max_temp) > 0.0f;
+}
+
+static void onSpindleSetState (spindle_ptrs_t *spindle, spindle_state_t state, float rpm)
+{
+    if(coolant_settings.spindle_link && state.on && !hal.coolant.get_state().flood) {
+        enqueue_coolant_override(CMD_OVERRIDE_COOLANT_FLOOD_TOGGLE);
+    }
+
+    on_spindle_set_state(spindle, state, rpm);
+}
+
+static bool onSpindleSelect (spindle_ptrs_t *spindle)
+{
+    on_spindle_set_state = spindle->set_state;
+    spindle->set_state = onSpindleSetState;
+
+    return on_spindle_select == NULL || on_spindle_select(spindle);
 }
 
 static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_flags_t report)
@@ -194,12 +210,13 @@ static bool is_setting_available (const setting_detail_t *setting, uint_fast16_t
 }
 
 static const setting_detail_t plugin_settings[] = {
-    { Setting_LaserCoolantOnDelay, Group_Coolant, "Laser coolant on delay", "seconds", Format_Decimal, "#0.0", "0.0", "30.0", Setting_NonCore, &coolant_settings.on_delay, NULL, NULL },
+    { Setting_LaserCoolantOnDelay, Group_Coolant, "Laser coolant OK delay", "seconds", Format_Decimal, "#0.0", "0.0", "30.0", Setting_NonCore, &coolant_settings.on_delay, NULL, NULL },
     { Setting_LaserCoolantOffDelay, Group_Coolant, "Laser coolant off delay", "minutes", Format_Decimal, "#0.0", "0.0", "30.0", Setting_NonCore, &coolant_settings.off_delay, NULL, NULL },
 //    { Setting_LaserCoolantMinTemp, Group_Coolant, "Laser coolant min temp", "deg", Format_Decimal, "#0.0", "0.0", "30.0", Setting_NonCore, &coolant_settings.min_temp, NULL, NULL, false },
     { Setting_LaserCoolantMaxTemp, Group_Coolant, "Laser coolant max temp", "deg", Format_Decimal, "#0.0", "0.0", "30.0", Setting_NonCore, &coolant_settings.max_temp, NULL, is_setting_available },
     { Setting_LaserCoolantTempPort, Group_AuxPorts, "Coolant temperature port", NULL, Format_Decimal, "-#0", "-1", max_aport, Setting_NonCoreFn, set_port, get_port, is_setting_available, { .reboot_required = On } },
-    { Setting_LaserCoolantOkPort, Group_AuxPorts, "Coolant ok port", NULL, Format_Decimal, "-#0", "-1", max_dport, Setting_NonCoreFn, set_port, get_port, NULL, { .reboot_required = On } }
+    { Setting_LaserCoolantOkPort, Group_AuxPorts, "Coolant ok port", NULL, Format_Decimal, "-#0", "-1", max_dport, Setting_NonCoreFn, set_port, get_port, NULL, { .reboot_required = On } },
+    { ((setting_id_t)683), Group_Coolant, "Coolant to spindle enable link", NULL, Format_Bool, NULL, NULL, NULL, Setting_NonCore, &coolant_settings.spindle_link, NULL, NULL }
 };
 
 #ifndef NO_SETTINGS_DESCRIPTIONS
@@ -210,6 +227,7 @@ static const setting_descr_t plugin_settings_descr[] = {
     { Setting_LaserCoolantMaxTemp, "" },
     { Setting_LaserCoolantTempPort, "Aux port number to use for coolant temperature monitoring." },
     { Setting_LaserCoolantOkPort, "Aux port number to use for coolant ok signal." },
+    { ((setting_id_t)683), "Link coolant enable signal to spindle enable." }
 };
 
 #endif
@@ -228,6 +246,7 @@ static void coolant_settings_restore (void)
 
     coolant_settings.coolant_ok_port = ioport_find_free(Port_Digital, Port_Input, (pin_cap_t){ .claimable = On }, "Coolant ok");
     coolant_settings.coolant_temp_port = ioport_find_free(Port_Analog, Port_Input, (pin_cap_t){ .claimable = On }, "Coolant temperature");
+    coolant_settings.spindle_link = false;
 
     coolant_settings_save();
 }
@@ -251,9 +270,14 @@ static void coolant_settings_load (void)
     if((coolant_temp_port = coolant_settings.coolant_temp_port) != 0xFF)
         ok = (can_monitor = ioport_claim(Port_Analog, Port_Input, &coolant_temp_port, "Coolant temperature"));
 
-    if(ok && (coolant_ok_port = coolant_settings.coolant_ok_port) != 0xFF)
-        ok = ioport_claim(Port_Digital, Port_Input, &coolant_ok_port, "Coolant ok");
+    if(ok && (coolant_ok_port = coolant_settings.coolant_ok_port) != 0xFF) {
 
+        ok = false;
+        xbar_t *portinfo = ioport_get_info(Port_Digital, Port_Input, coolant_ok_port);
+
+        if(portinfo && !portinfo->mode.claimed && (portinfo->cap.irq_mode & IRQ_Mode_Change) && (ok = ioport_claim(Port_Digital, Port_Input, &coolant_ok_port, "Coolant ok")))
+            ioport_enable_irq(coolant_ok_port, IRQ_Mode_Change, coolant_lost_handler);
+    }
     if(ok) {
 
         on_realtime_report = grbl.on_realtime_report;
@@ -297,6 +321,9 @@ void laser_coolant_init (void)
 
         on_report_options = grbl.on_report_options;
         grbl.on_report_options = onReportOptions;
+
+        on_spindle_select = grbl.on_spindle_select;
+        grbl.on_spindle_select = onSpindleSelect;
 
         settings_register(&setting_details);
 
