@@ -29,6 +29,7 @@
 
 #include "grbl/hal.h"
 #include "grbl/override.h"
+#include "grbl/state_machine.h"
 #include "grbl/protocol.h"
 #include "grbl/nvs_buffer.h"
 
@@ -68,14 +69,18 @@ static void coolant_flood_off (void *data)
     mode.flood = Off;
     on_coolant_changed.set_state(mode);
     coolant_off_pending = coolant_on = false;
-    sys.report.coolant = On; // Set to report change immediately
+    // sys.report.coolant = On; // Set to report change immediately <-- is this needed?
 }
 
 static void coolant_lost_handler (uint8_t port, bool state)
 {
     if(coolant_on && !coolant_off_pending){
-        task_add_immediate(coolant_flood_off, NULL);
-        system_set_exec_alarm(Alarm_AbortCycle);
+
+        if(gc_spindle_get(0)->state.on)
+            system_set_exec_state_flag(EXEC_FEED_HOLD);
+
+        enqueue_coolant_override(CMD_OVERRIDE_COOLANT_FLOOD_TOGGLE);
+        task_add_immediate(report_warning, "Coolant system has turned off unexpectedly.");
     }        
 }
 
@@ -86,9 +91,12 @@ static void coolantSetState (coolant_state_t mode)
 
     if(changed && !mode.flood) {
 
-        if(gc_spindle_get(0)->state.on) { // is this the correct way to do this? [might want to tweak this a bit]          
-            task_add_immediate(coolant_flood_off, NULL);
-            system_set_exec_alarm(Alarm_AbortCycle);            
+        // this next block gets out of sync with iosender . . . hmm? how to not have this happen?
+        if(gc_spindle_get(0)->state.on && state_get() != STATE_HOLD) { // is this the correct way to do this? [might want to tweak this a bit]          
+            mode.flood = On;
+            gc_state.modal.coolant = mode; 
+            task_add_immediate(report_warning, "Coolant system cannot be disabled while laser is running.");
+            on_coolant_changed.set_state(mode);
             return;
         }
         if(coolant_settings.off_delay > 0.0f && !sys.reset_pending) {
@@ -109,8 +117,12 @@ static void coolantSetState (coolant_state_t mode)
             coolant_off_pending = false;
         }
         if(coolant_settings.on_delay > 0.0f && ioport_wait_on_input(Port_Digital, coolant_ok_port, WaitMode_High, coolant_settings.on_delay) != 1) {
+            spindle_all_off();
             task_add_immediate(coolant_flood_off, NULL);
-            system_set_exec_alarm(Alarm_AbortCycle);
+            gc_state.modal.coolant = mode; 
+            system_raise_alarm(Alarm_AbortCycle);
+            task_add_immediate(report_warning, "Coolant system has failed to start.");
+
         } else
             coolant_on = true;
     }
