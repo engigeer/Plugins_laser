@@ -114,6 +114,7 @@ static void coolantSetState (coolant_state_t mode)
             sys.report.coolant = On;
             return;
         }
+        // TODO: CHANGE HOW THIS IS HANDLED? NOT SURE IF THIS IS BEHAVING AS EXPECTED RIGHT NOW... 25-09-26
         if(coolant_settings.off_delay > 0.0f && !sys.reset_pending) { //
             mode.flood = On;
             gc_state.modal.coolant = mode; 
@@ -249,7 +250,7 @@ static bool is_setting_available (const setting_detail_t *setting, uint_fast16_t
 
 static const setting_detail_t plugin_settings[] = {
     { Setting_LaserCoolantOnDelay, Group_Coolant, "Laser coolant OK delay", "seconds", Format_Decimal, "#0.0", "0.0", "30.0", Setting_NonCore, &coolant_settings.on_delay, NULL, NULL },
-    { Setting_LaserCoolantOffDelay, Group_Coolant, "Laser coolant off delay", "minutes", Format_Decimal, "#0.0", "0.0", "30.0", Setting_NonCore, &coolant_settings.off_delay, NULL, NULL },
+//    { Setting_LaserCoolantOffDelay, Group_Coolant, "Laser coolant off delay", "minutes", Format_Decimal, "#0.0", "0.0", "30.0", Setting_NonCore, &coolant_settings.off_delay, NULL, NULL },
 //    { Setting_LaserCoolantMinTemp, Group_Coolant, "Laser coolant min temp", "deg", Format_Decimal, "#0.0", "0.0", "30.0", Setting_NonCore, &coolant_settings.min_temp, NULL, NULL, false },
     // { Setting_LaserCoolantMaxTemp, Group_Coolant, "Laser coolant max temp", "deg", Format_Decimal, "#0.0", "0.0", "30.0", Setting_NonCore, &coolant_settings.max_temp, NULL, is_setting_available },
     // { Setting_LaserCoolantTempPort, Group_AuxPorts, "Coolant temperature port", NULL, Format_Decimal, "-#0", "-1", max_aport, Setting_NonCoreFn, set_port, get_port, is_setting_available, { .reboot_required = On } },
@@ -261,7 +262,7 @@ static const setting_detail_t plugin_settings[] = {
 
 static const setting_descr_t plugin_settings_descr[] = {
     { Setting_LaserCoolantOnDelay, "" },
-    { Setting_LaserCoolantOffDelay, "" },
+    //{ Setting_LaserCoolantOffDelay, "" },
     // { Setting_LaserCoolantMaxTemp, "" },
     // { Setting_LaserCoolantTempPort, "Aux port number to use for coolant temperature monitoring." },
     { Setting_LaserCoolantOkPort, "Aux port number to use for coolant ok signal." },
