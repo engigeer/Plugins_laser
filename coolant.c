@@ -139,8 +139,9 @@ static void coolantSetState (coolant_state_t mode)
             coolant_off_pending = false;
         }
         if(coolant_settings.on_delay > 0.0f && ioport_wait_on_input(Port_Digital, coolant_ok_port, WaitMode_High, coolant_settings.on_delay) != 1) {
-            spindle_all_off();
+            //gc_spindle_off(); // TODO stop modal state from changing to on? show as off?
             task_add_immediate(coolant_flood_off, NULL);
+            sys.cancel = true; // is this correct?
 
             system_raise_alarm(Alarm_AbortCycle);
             task_add_immediate(report_warning, "Coolant system has failed to start.");
@@ -157,14 +158,17 @@ static void onSpindleSetState (spindle_ptrs_t *spindle, spindle_state_t state, f
 {
     coolant_state_t mode = hal.coolant.get_state();
 
+
     if(coolant_settings.spindle_link && state.on && !mode.flood) {
 
         mode.flood = On;
-        coolant_set_state(mode);
         gc_state.modal.coolant = mode; 
+        coolant_set_state(mode);
     }
 
-    on_spindle_set_state(spindle, state, rpm);
+    if (!ABORTED) //is this the right way to do this? // why is S still in realtime report?
+        on_spindle_set_state(spindle, state, rpm);    
+
 }
 
 static bool onSpindleSelect (spindle_ptrs_t *spindle)
