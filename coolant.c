@@ -81,7 +81,8 @@ static void coolant_lost_handler (uint8_t port, bool state)
 
         if(gc_spindle_get(0)->state.on){
 
-            system_set_exec_state_flag(EXEC_FEED_HOLD);
+            system_set_exec_state_flag(EXEC_MOTION_CANCEL_FAST);
+            gc_spindle_off();
             // if (!(settings.mode == Mode_Laser && settings.flags.disable_laser_during_hold)) //NECESSARY?
             //     enqueue_spindle_override(CMD_OVERRIDE_SPINDLE_STOP);
                 
@@ -91,8 +92,10 @@ static void coolant_lost_handler (uint8_t port, bool state)
             task_delete(coolant_flood_off, NULL);
             coolant_off_pending = false;
         }
-
         task_add_immediate(coolant_flood_off, NULL);
+        //sys.cancel = true; // is this correct?
+
+        system_raise_alarm(Alarm_AbortCycle);
         task_add_immediate(report_warning, "Coolant system has turned off unexpectedly.");
     }        
 }
