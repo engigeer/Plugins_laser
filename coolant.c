@@ -79,23 +79,17 @@ static void coolant_lost_handler (uint8_t port, bool state)
 {
     if(coolant_on){ // && !coolant_off_pending){
 
-        if(gc_spindle_get(0)->state.on){
-
-            system_set_exec_state_flag(EXEC_MOTION_CANCEL_FAST);
-            gc_spindle_off();
-            // if (!(settings.mode == Mode_Laser && settings.flags.disable_laser_during_hold)) //NECESSARY?
-            //     enqueue_spindle_override(CMD_OVERRIDE_SPINDLE_STOP);
-                
-        }
-
         if (coolant_off_pending){
             task_delete(coolant_flood_off, NULL);
             coolant_off_pending = false;
         }
-        task_add_immediate(coolant_flood_off, NULL);
-        //sys.cancel = true; // is this correct?
+
+        if(gc_spindle_get(0)->state.on)
+            gc_spindle_off();
 
         system_raise_alarm(Alarm_AbortCycle);
+
+        task_add_immediate(coolant_flood_off, NULL);
         task_add_immediate(report_warning, "Coolant system has turned off unexpectedly.");
     }        
 }
@@ -142,9 +136,8 @@ static void coolantSetState (coolant_state_t mode)
             coolant_off_pending = false;
         }
         if(coolant_settings.on_delay > 0.0f && ioport_wait_on_input(Port_Digital, coolant_ok_port, WaitMode_High, coolant_settings.on_delay) != 1) {
-            //gc_spindle_off(); // TODO stop modal state from changing to on? show as off?
             task_add_immediate(coolant_flood_off, NULL);
-            sys.cancel = true; // is this correct?
+            sys.cancel = true;
 
             system_raise_alarm(Alarm_AbortCycle);
             task_add_immediate(report_warning, "Coolant system has failed to start.");
@@ -161,7 +154,6 @@ static void onSpindleSetState (spindle_ptrs_t *spindle, spindle_state_t state, f
 {
     coolant_state_t mode = hal.coolant.get_state();
 
-
     if(coolant_settings.spindle_link && state.on && !mode.flood) {
 
         mode.flood = On;
@@ -169,7 +161,7 @@ static void onSpindleSetState (spindle_ptrs_t *spindle, spindle_state_t state, f
         coolant_set_state(mode);
     }
 
-    if (!ABORTED) //is this the right way to do this? // why is S still in realtime report?
+    if (!ABORTED)
         on_spindle_set_state(spindle, state, rpm);    
 
 }
