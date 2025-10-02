@@ -150,6 +150,10 @@ static void coolantSetState (coolant_state_t mode)
     //monitor_on = mode.flood && (coolant_settings.min_temp + coolant_settings.max_temp) > 0.0f;
 }
 
+static void spindle_off_now(void *data) {
+    gc_spindle_off();
+}
+
 static void onSpindleSetState (spindle_ptrs_t *spindle, spindle_state_t state, float rpm)
 {
     coolant_state_t mode = hal.coolant.get_state();
@@ -163,7 +167,8 @@ static void onSpindleSetState (spindle_ptrs_t *spindle, spindle_state_t state, f
 
     if (!ABORTED)
         on_spindle_set_state(spindle, state, rpm);    
-
+    else
+        task_add_immediate(spindle_off_now, NULL);
 }
 
 static bool onSpindleSelect (spindle_ptrs_t *spindle)
