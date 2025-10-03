@@ -53,7 +53,7 @@ typedef struct {
 } laser_coolant_settings_t;
 
 static uint8_t coolant_ok_port;//, coolant_temp_port;
-static bool coolant_on = false, monitor_on = false, can_monitor = false, coolant_off_pending = false;
+static bool coolant_on = false, coolant_off_pending = false;//, monitor_on = false, can_monitor = false;
 static on_spindle_select_ptr on_spindle_select;
 static on_report_options_ptr on_report_options;
 static on_realtime_report_ptr on_realtime_report;
@@ -101,8 +101,6 @@ static void coolantSetState (coolant_state_t mode)
 
     if(changed && !mode.flood) { //Case handles turning off coolant
 
-        // this next block gets out of sync with iosender . . . hmm? how to not have this happen?
-        // is this the correct way to do this? [might want to tweak this a bit]  
         if(gc_spindle_get(0)->state.on) {// && state_get() != STATE_HOLD) {
             mode.flood = On;
             gc_state.modal.coolant = mode; 
@@ -122,9 +120,6 @@ static void coolantSetState (coolant_state_t mode)
         }
 
         coolant_on = false;
-        // task_add_immediate(coolant_flood_off, NULL);
-        // on_coolant_changed.set_state(mode); //continue handling chain
-        // return;
 
     }
 
@@ -150,7 +145,7 @@ static void coolantSetState (coolant_state_t mode)
     //monitor_on = mode.flood && (coolant_settings.min_temp + coolant_settings.max_temp) > 0.0f;
 }
 
-static void spindle_off_now(void *data) {
+static void coolant_fail (void *data) {
     gc_spindle_off();
 }
 
@@ -168,7 +163,7 @@ static void onSpindleSetState (spindle_ptrs_t *spindle, spindle_state_t state, f
     if (!ABORTED)
         on_spindle_set_state(spindle, state, rpm);    
     else
-        task_add_immediate(spindle_off_now, NULL);
+        task_add_immediate(coolant_fail, NULL);
 }
 
 static bool onSpindleSelect (spindle_ptrs_t *spindle)
@@ -247,10 +242,10 @@ static float get_port (setting_id_t setting)
     return value;
 }
 
-static bool is_setting_available (const setting_detail_t *setting, uint_fast16_t offset)
-{
-    return n_ain > 0;
-}
+// static bool is_setting_available (const setting_detail_t *setting, uint_fast16_t offset)
+// {
+//     return n_ain > 0;
+// }
 
 static const setting_detail_t plugin_settings[] = {
     { Setting_LaserCoolantOnDelay, Group_Coolant, "Laser coolant OK delay", "seconds", Format_Decimal, "#0.0", "0.0", "30.0", Setting_NonCore, &coolant_settings.on_delay, NULL, NULL },
