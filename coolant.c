@@ -87,7 +87,7 @@ static void coolant_lost_handler (uint8_t port, bool state)
         if(gc_spindle_get(0)->state.on)
             gc_spindle_off();
 
-        system_raise_alarm(Alarm_AbortCycle);
+        system_set_exec_alarm(Alarm_AbortCycle);
 
         task_add_immediate(coolant_flood_off, NULL);
         task_add_immediate(report_warning, "Coolant system has turned off unexpectedly.");
