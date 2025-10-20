@@ -235,8 +235,6 @@ static void coolant_settings_restore (void)
 
 static void coolant_settings_load (void)
 {
-    bool ok;
-
     if(hal.nvs.memcpy_from_nvs((uint8_t *)&coolant_settings, nvs_address, sizeof(laser_coolant_settings_t), true) != NVS_TransferResult_OK)
         coolant_settings_restore();
 
