@@ -175,7 +175,7 @@ static void coolantSetState (bool on) //(coolant_state_t mode)
             return;
         }
 
-        coolant_on = false;
+        task_add_immediate(laser_coolant_off, NULL);
     }
 
     //on_coolant_changed.set_state(mode); // continue handling chain
@@ -215,10 +215,13 @@ static void onSpindleSetState (spindle_ptrs_t *spindle, spindle_state_t state, f
         coolantSetState(On);
     }
 
-    if (!ABORTED && coolant_on) // is this second condition necessary?
+    if (!ABORTED)
         on_spindle_set_state(spindle, state, rpm);    
-    else
+    else {
+        state.on = Off;
+        on_spindle_set_state(spindle, state, rpm);    
         task_add_immediate(coolant_fail, NULL);
+    }
 }
 
 static bool onSpindleSelect (spindle_ptrs_t *spindle)
@@ -311,11 +314,12 @@ static void coolant_settings_load (void)
         coolant_settings_restore();
 
     coolant_ok_port = coolant_settings.coolant_ok_port;
+    coolant_control_port = coolant_settings.coolant_control_port;
     xbar_t *portinfo;
 
-    if(!!(portinfo = d_out.claim(&d_in, &coolant_control_port, "Coolant control", (pin_cap_t){ .irq_mode = IRQ_Mode_Change })) &&
-        !!(portinfo = d_in.claim(&d_in, &coolant_ok_port, "Coolant ok", (pin_cap_t){ .irq_mode = IRQ_Mode_Change })) &&
-        ioport_enable_irq(coolant_ok_port, IRQ_Mode_Change, coolant_lost_handler)) {
+    if( !!(portinfo = d_in.claim(&d_in, &coolant_ok_port, "Coolant ok", (pin_cap_t){ .irq_mode = IRQ_Mode_Change })) &&
+        ioport_enable_irq(coolant_ok_port, IRQ_Mode_Change, coolant_lost_handler) &&
+        !!(portinfo = d_out.claim(&d_out, &coolant_control_port, "Coolant control", (pin_cap_t){}))) {
 
         on_realtime_report = grbl.on_realtime_report;
         grbl.on_realtime_report = onRealtimeReport;
@@ -330,7 +334,7 @@ static void onReportOptions (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("Laser coolant", "0.11-MG");
+        report_plugin("Laser coolant", "0.12-MG");
 }
 
 void laser_coolant_init (void)
@@ -346,7 +350,7 @@ void laser_coolant_init (void)
     };
 
     if(ioports_cfg(&d_in, Port_Digital, Port_Input)->n_ports && 
-        ioports_cfg(&d_out, Port_Digital, Port_Input)->n_ports && 
+        ioports_cfg(&d_out, Port_Digital, Port_Output)->n_ports && 
         (nvs_address = nvs_alloc(sizeof(laser_coolant_settings_t)))) {
 
         memcpy(&user_mcode, &grbl.user_mcode, sizeof(user_mcode_ptrs_t));
