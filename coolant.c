@@ -25,6 +25,8 @@
 
 #if LASER_COOLANT_ENABLE
 
+#define CMD_CHILLER_TOGGLE           0xBD //!< Realtime command to toggle chiller on/off
+
 #include <string.h>
 #include <math.h>
 
@@ -51,8 +53,8 @@ typedef struct {
 } laser_coolant_settings_t;
 
 typedef enum {
-    LaserCoolant_On = 517,
-    LaserCoolant_Off = 518
+    LaserCoolant_On = 521,
+    LaserCoolant_Off = 522
 } smc_mcode_t;
 
 static uint8_t coolant_control_port;
@@ -70,6 +72,7 @@ static on_report_options_ptr on_report_options;
 static on_realtime_report_ptr on_realtime_report;
 //static coolant_ptrs_t on_coolant_changed;
 static spindle_set_state_ptr on_spindle_set_state;
+static on_unknown_realtime_cmd_ptr on_unknown_realtime_cmd;
 
 static user_mcode_type_t userMCodeCheck (user_mcode_t mcode)
 {
@@ -204,6 +207,15 @@ static void coolant_fail (void *data) {
     gc_spindle_off();
 }
 
+static bool onRealtimeCmd (char c)
+{
+    if(c == CMD_CHILLER_TOGGLE && coolant_control_port != 0xFF) {
+        coolantSetState(!coolant_on); //Toggle coolant state
+        return true;
+    }
+    return on_unknown_realtime_cmd == NULL || on_unknown_realtime_cmd(c);
+}
+
 static void onSpindleSetState (spindle_ptrs_t *spindle, spindle_state_t state, float rpm)
 {
     //coolant_state_t mode = hal.coolant.get_state();
@@ -234,6 +246,19 @@ static bool onSpindleSelect (spindle_ptrs_t *spindle)
 
 static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_flags_t report)
 {
+    static float coolant_state_prev = Off;
+
+    char buf[20] = "";
+
+    if(coolant_on != coolant_state_prev || report.all) {
+        strcat(buf, "|SMC:");
+        strcat(buf, uitoa(coolant_on));
+        coolant_state_prev = coolant_on;
+    }
+
+    if(*buf != '\0')
+        stream_write(buf);
+
     if(on_realtime_report)
         on_realtime_report(stream_write, report);
 }
@@ -320,6 +345,9 @@ static void coolant_settings_load (void)
     if( !!(portinfo = d_in.claim(&d_in, &coolant_ok_port, "Coolant ok", (pin_cap_t){ .irq_mode = IRQ_Mode_Change })) &&
         ioport_enable_irq(coolant_ok_port, IRQ_Mode_Change, coolant_lost_handler) &&
         !!(portinfo = d_out.claim(&d_out, &coolant_control_port, "Coolant control", (pin_cap_t){}))) {
+
+        on_unknown_realtime_cmd = grbl.on_unknown_realtime_cmd;
+        grbl.on_unknown_realtime_cmd = onRealtimeCmd;
 
         on_realtime_report = grbl.on_realtime_report;
         grbl.on_realtime_report = onRealtimeReport;
