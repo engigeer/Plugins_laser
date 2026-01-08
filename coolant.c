@@ -59,7 +59,7 @@ typedef enum {
 
 static uint8_t coolant_control_port;
 static uint8_t coolant_ok_port;
-static bool coolant_on = false, coolant_off_pending = false;
+static bool coolant_on = false, coolant_off_pending = false, report_coolant_state = false;
 static laser_coolant_settings_t coolant_settings;
 static io_port_cfg_t d_in, d_out;
 static nvs_address_t nvs_address;
@@ -184,6 +184,9 @@ static void coolantSetState (bool on) //(coolant_state_t mode)
     //on_coolant_changed.set_state(mode); // continue handling chain
 
     if(changed && on) {
+
+        ioport_digital_out(coolant_control_port, On); // Actually turns on coolant
+
         if (coolant_off_pending) {
             task_delete(laser_coolant_off, NULL);
             coolant_off_pending = false;
@@ -195,9 +198,9 @@ static void coolantSetState (bool on) //(coolant_state_t mode)
 
             system_raise_alarm(Alarm_AbortCycle);
             task_add_immediate(report_warning, "Coolant system has failed to start.");
+            report_coolant_state = true;
 
         } else {
-            ioport_digital_out(coolant_control_port, On);
             coolant_on = true;
         }
     }
@@ -207,10 +210,15 @@ static void coolant_fail (void *data) {
     gc_spindle_off();
 }
 
+static void laser_coolant_toggle (void *data)
+{
+    coolantSetState(!coolant_on); //Toggle coolant state
+}
+
 static bool onRealtimeCmd (char c)
 {
     if(c == CMD_CHILLER_TOGGLE && coolant_control_port != 0xFF) {
-        coolantSetState(!coolant_on); //Toggle coolant state
+        task_add_immediate(laser_coolant_toggle, NULL);
         return true;
     }
     return on_unknown_realtime_cmd == NULL || on_unknown_realtime_cmd(c);
@@ -248,9 +256,10 @@ static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_fla
 {
     static float coolant_state_prev = Off;
 
+
     char buf[20] = "";
 
-    if(coolant_on != coolant_state_prev || report.all) {
+    if(coolant_on != coolant_state_prev || report_coolant_state || report.all) {
         strcat(buf, "|SMC:");
         strcat(buf, uitoa(coolant_on));
         coolant_state_prev = coolant_on;
@@ -258,6 +267,8 @@ static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_fla
 
     if(*buf != '\0')
         stream_write(buf);
+
+    report_coolant_state = false;
 
     if(on_realtime_report)
         on_realtime_report(stream_write, report);
