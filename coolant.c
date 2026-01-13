@@ -186,6 +186,8 @@ static void coolantSetState (bool on) //(coolant_state_t mode)
     if(changed && on) {
 
         ioport_digital_out(coolant_control_port, On); // Actually turns on coolant
+        coolant_on = true;
+        report_coolant_state = true;
 
         if (coolant_off_pending) {
             task_delete(laser_coolant_off, NULL);
@@ -198,10 +200,8 @@ static void coolantSetState (bool on) //(coolant_state_t mode)
 
             system_raise_alarm(Alarm_AbortCycle);
             task_add_immediate(report_warning, "Coolant system has failed to start.");
+            coolant_on = false;
             report_coolant_state = true;
-
-        } else {
-            coolant_on = true;
         }
     }
 }
