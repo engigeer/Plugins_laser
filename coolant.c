@@ -59,7 +59,7 @@ typedef enum {
 
 static uint8_t coolant_control_port;
 static uint8_t coolant_ok_port;
-static bool coolant_on = false, coolant_off_pending = false, report_coolant_state = false;
+static bool coolant_on = false, coolant_off_pending = false, enable_interrupt = false, report_coolant_state = false;
 static laser_coolant_settings_t coolant_settings;
 static io_port_cfg_t d_in, d_out;
 static nvs_address_t nvs_address;
@@ -130,13 +130,13 @@ static void laser_coolant_off (void *data)
 
     //on_coolant_changed.set_state(mode);
     ioport_digital_out(coolant_control_port, Off);
-    coolant_off_pending = coolant_on = false;
+    coolant_off_pending = coolant_on = enable_interrupt = false;
     //sys.report.coolant = On;
 }
 
 static void coolant_lost_handler (uint8_t port, bool state)
 {
-    if(coolant_on){ // && !coolant_off_pending){
+    if(coolant_on && enable_interrupt){ // && !coolant_off_pending){
 
         if (coolant_off_pending){
             task_delete(laser_coolant_off, NULL);
@@ -203,6 +203,8 @@ static void coolantSetState (bool on) //(coolant_state_t mode)
             coolant_on = false;
             report_coolant_state = true;
         }
+        else
+            enable_interrupt = true; // don't enable coolant lost interrupt until after successful start delay
     }
 }
 
