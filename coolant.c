@@ -136,7 +136,7 @@ static void laser_coolant_off (void *data)
 
 static void coolant_lost_handler (uint8_t port, bool state)
 {
-    if(coolant_on && enable_interrupt){ // && !coolant_off_pending){
+    if(enable_interrupt){ // && !coolant_off_pending){
 
         if (coolant_off_pending){
             task_delete(laser_coolant_off, NULL);
